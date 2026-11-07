@@ -1,0 +1,38 @@
+name: threads-autopost
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency:
+  group: threads-autopost
+  cancel-in-progress: false
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Post yang sudah tiba masa
+        env:
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+        run: python threads_autopost.py
+      - name: Simpan status
+        run: |
+          git config user.name "threads-autopost"
+          git config user.email "actions@users.noreply.github.com"
+          git add posts.csv
+          git diff --cached --quiet || (git commit -m "status post [skip ci]" && git pull --rebase -X theirs -q && git push)
+      - name: Perbaharui token (setiap Isnin)
+        if: github.event_name == 'schedule'
+        env:
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ "$(date -u +%u)" = "1" ] && [ "$(date -u +%H)" = "03" ] && [ "$(date -u +%M)" -lt 10 ]; then python threads_autopost.py refresh; fi
