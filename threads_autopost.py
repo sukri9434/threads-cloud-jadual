@@ -6,7 +6,8 @@ topic_tag,reply_text,reply_media,ref
  - scheduled_at = masa Malaysia "YYYY-MM-DD HH:MM"
  - status: pending -> posted / failed (skip = dibatalkan)
  - reply_text = reply pertama (link affiliate). reply_media='image' = lampirkan gambar sama dalam reply.
-Rahsia (GitHub Secrets): THREADS_ACCESS_TOKEN, (pilihan) GH_PAT untuk perbaharui token automatik.
+Rahsia (GitHub Secrets): THREADS_ACCESS_TOKEN, (pilihan) GH_PAT untuk perbaharui token automatik,
+(pilihan) TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID: alert Telegram setiap post berjaya / gagal (dengan sebab).
 """
 import base64, csv, io, os, sys, time
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,26 @@ KL = timezone(timedelta(hours=8))
 CSV_PATH = os.environ.get("POSTS_CSV", "posts.csv")
 TOKEN = os.environ.get("THREADS_ACCESS_TOKEN", "").strip()
 LEWAT_JAM = 12   # post yang terlepas lebih daripada ini ditanda failed (elak post lama keluar tiba-tiba)
+TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+
+
+def alert(teks):
+    """Hantar alert Telegram (pilihan). Gagal hantar alert tak menjejaskan post."""
+    if not (TG_TOKEN and TG_CHAT):
+        return
+    try:
+        requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+                      data={"chat_id": TG_CHAT, "text": teks[:3900], "disable_web_page_preview": "true"}, timeout=20)
+    except Exception as e:
+        print("alert Telegram gagal:", e)
+
+
+def ringkas(r):
+    c = (r.get("caption") or "").replace("\n", " ").strip()
+    return (c[:70] + "…") if len(c) > 70 else c
+
+
 COLS = ["id", "platform", "scheduled_at", "type", "media_urls", "caption", "status", "permalink", "error",
         "topic_tag", "reply_text", "reply_media", "ref"]
 
@@ -102,9 +123,18 @@ def hantar(row):
         try:
             time.sleep(5)
             q = {"media_type": "TEXT", "text": reply[:500], "reply_to_id": pid}
-            if (row.get("reply_media") or "") == "image" and p["media_type"] == "IMAGE":
+            rm = (row.get("reply_media") or "").strip()
+            if rm.lower().startswith("http"):          # gambar asal produk Shopee (bukan avatar)
+                q.update(media_type="IMAGE", image_url=rm)
+            elif rm == "image" and p["media_type"] == "IMAGE":
                 q.update(media_type="IMAGE", image_url=media)
-            terbit(api("POST", "me/threads", **q)["id"])
+            try:
+                terbit(api("POST", "me/threads", **q)["id"])
+            except Exception as e1:
+                if q["media_type"] != "IMAGE":
+                    raise
+                print("reply bergambar gagal, cuba teks sahaja:", e1)   # link tetap keluar
+                terbit(api("POST", "me/threads", media_type="TEXT", text=reply[:500], reply_to_id=pid)["id"])
         except Exception as e:  # post utama dah keluar; jangan hantar semula
             ralat_reply = "Post keluar tetapi reply gagal: " + str(e)
     return link, ralat_reply
@@ -124,6 +154,7 @@ def jalan():
             at = datetime.strptime(r["scheduled_at"].strip(), "%Y-%m-%d %H:%M").replace(tzinfo=KL)
         except Exception:
             r["status"], r["error"] = "failed", "format scheduled_at salah"; ubah = True
+            alert(f"❌ Threads post #{r.get('id')} GAGAL\nSebab: format scheduled_at salah\n{ringkas(r)}")
             continue
         if at <= kini:
             due.append((at, r))
@@ -131,14 +162,17 @@ def jalan():
     for at, r in due[:3]:  # maksimum 3 sekali jalan
         if kini - at > timedelta(hours=LEWAT_JAM):
             r["status"], r["error"] = "failed", f"terlepas masa lebih {LEWAT_JAM} jam"; ubah = True
+            alert(f"❌ Threads post #{r.get('id')} GAGAL\nSebab: terlepas masa lebih {LEWAT_JAM} jam (jadual {r.get('scheduled_at')})\n{ringkas(r)}")
             continue
         try:
             link, ralat = hantar(r)
             r["status"], r["permalink"], r["error"] = "posted", link, ralat
             print("POSTED", r.get("id"), link, ralat)
+            alert(f"✅ Threads post #{r.get('id')} BERJAYA ({r.get('scheduled_at')})\n{ringkas(r)}\n{link or ''}" + (f"\n⚠️ Reply link: {ralat}" if ralat else ""))
         except Exception as e:
             r["status"], r["error"] = "failed", str(e)[:300]
             print("FAILED", r.get("id"), e)
+            alert(f"❌ Threads post #{r.get('id')} GAGAL ({r.get('scheduled_at')})\nSebab: {str(e)[:300]}\n{ringkas(r)}")
         ubah = True
         simpan(head, rows)  # simpan segera supaya tak dipost dua kali kalau langkah seterusnya mati
     if ubah:
