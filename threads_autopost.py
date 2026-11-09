@@ -118,6 +118,16 @@ def hantar(row):
         p["topic_tag"] = tag
     pid, link = terbit(api("POST", "me/threads", **p)["id"])
     ralat_reply = ""
+    mentah = (row.get("reply_text") or "")
+    if "|||" in mentah:  # thread berantai: setiap bahagian reply kepada bahagian sebelumnya
+        sebelum = pid
+        try:
+            for bhg in [x.strip() for x in mentah.split("|||") if x.strip()]:
+                time.sleep(5)
+                sebelum, _ = terbit(api("POST", "me/threads", media_type="TEXT", text=bhg[:500], reply_to_id=sebelum)["id"])
+        except Exception as e:
+            ralat_reply = "Post keluar tetapi sambungan thread gagal: " + str(e)
+        return link, ralat_reply
     reply = (row.get("reply_text") or "").strip()
     if reply:
         try:
