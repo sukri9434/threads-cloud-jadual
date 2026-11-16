@@ -104,6 +104,23 @@ def terbit(cid):
     return pid, link
 
 
+def carousel(urls, teks, reply_to):
+    """Bina container CAROUSEL (2-10 item). URL .mp4 = VIDEO, lain = IMAGE. Item yang gagal dilangkau."""
+    anak = []
+    for u in urls[:10]:
+        vid = u.lower().split("?")[0].endswith(".mp4")
+        try:
+            c = api("POST", "me/threads", media_type="VIDEO" if vid else "IMAGE",
+                    **({"video_url": u} if vid else {"image_url": u}), is_carousel_item="true")["id"]
+            tunggu(c, 300 if vid else 120)
+            anak.append(c)
+        except Exception as e:
+            print("item carousel dilangkau:", u[:80], e)
+    if len(anak) < 2:
+        raise RuntimeError("item carousel tak cukup")
+    return api("POST", "me/threads", media_type="CAROUSEL", children=",".join(anak), text=teks, reply_to_id=reply_to)["id"]
+
+
 def hantar(row):
     jenis = (row.get("type") or "TEXT").upper()
     media = (row.get("media_urls") or "").split("|")[0].strip()
@@ -124,6 +141,14 @@ def hantar(row):
             time.sleep(5)
             q = {"media_type": "TEXT", "text": reply[:500], "reply_to_id": pid}
             rm = (row.get("reply_media") or "").strip()
+            senarai = [u.strip() for u in rm.split("|") if u.strip().lower().startswith("http")]
+            if len(senarai) >= 2:                     # carousel: gambar produk + video listing + media review pembeli
+                try:
+                    terbit(carousel(senarai, reply[:500], pid))
+                    return link, ralat_reply
+                except Exception as ec:
+                    print("reply carousel gagal, cuba gambar pertama sahaja:", ec)
+                    rm = next((u for u in senarai if not u.lower().split("?")[0].endswith(".mp4")), "")
             if rm.lower().startswith("http"):          # gambar asal produk Shopee (bukan avatar)
                 q.update(media_type="IMAGE", image_url=rm)
             elif rm == "image" and p["media_type"] == "IMAGE":
