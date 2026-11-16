@@ -1,7 +1,6 @@
 name: threads-siri
 on:
-  schedule:
-    - cron: "*/10 * * * *"
+  # schedule dihentikan 16 Nov (pengguna): post siri/soalan ARA stop
   workflow_dispatch: {}
 permissions:
   contents: write
