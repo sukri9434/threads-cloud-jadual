@@ -104,7 +104,7 @@ def terbit(cid):
     return pid, link
 
 
-def carousel(urls, teks, reply_to):
+def carousel(urls, teks, reply_to=None, tag=""):
     """Bina container CAROUSEL (2-10 item). URL .mp4 = VIDEO, lain = IMAGE. Item yang gagal dilangkau."""
     anak = []
     for u in urls[:10]:
@@ -118,13 +118,26 @@ def carousel(urls, teks, reply_to):
             print("item carousel dilangkau:", u[:80], e)
     if len(anak) < 2:
         raise RuntimeError("item carousel tak cukup")
-    return api("POST", "me/threads", media_type="CAROUSEL", children=",".join(anak), text=teks, reply_to_id=reply_to)["id"]
+    p = {"media_type": "CAROUSEL", "children": ",".join(anak), "text": teks}
+    if reply_to:
+        p["reply_to_id"] = reply_to
+    if tag:
+        p["topic_tag"] = tag
+    return api("POST", "me/threads", **p)["id"]
 
 
 def hantar(row):
     jenis = (row.get("type") or "TEXT").upper()
-    media = (row.get("media_urls") or "").split("|")[0].strip()
+    semua = [u.strip() for u in (row.get("media_urls") or "").split("|") if u.strip()]
+    media = semua[0] if semua else ""
     teks = (row.get("caption") or "")[:500]
+    if jenis == "CAROUSEL" and len(semua) >= 2:   # post utama: gambar produk sedang diguna + video listing Shopee
+        try:
+            pid, link = terbit(carousel(semua, teks, None, (row.get("topic_tag") or "").strip()))
+            return balas(row, pid, link, "IMAGE", media)
+        except Exception as ec:
+            print("carousel utama gagal, guna media pertama:", ec)
+            jenis = "VIDEO" if media.lower().split("?")[0].endswith(".mp4") else "IMAGE"
     p = {"media_type": jenis if jenis in ("IMAGE", "VIDEO") and media else "TEXT", "text": teks}
     if p["media_type"] == "IMAGE":
         p["image_url"] = media
@@ -134,6 +147,10 @@ def hantar(row):
     if tag:
         p["topic_tag"] = tag
     pid, link = terbit(api("POST", "me/threads", **p)["id"])
+    return balas(row, pid, link, p["media_type"], media)
+
+
+def balas(row, pid, link, jenis_utama, media):
     ralat_reply = ""
     reply = (row.get("reply_text") or "").strip()
     if reply:
@@ -151,7 +168,7 @@ def hantar(row):
                     rm = next((u for u in senarai if not u.lower().split("?")[0].endswith(".mp4")), "")
             if rm.lower().startswith("http"):          # gambar asal produk Shopee (bukan avatar)
                 q.update(media_type="IMAGE", image_url=rm)
-            elif rm == "image" and p["media_type"] == "IMAGE":
+            elif rm == "image" and jenis_utama == "IMAGE" and media:
                 q.update(media_type="IMAGE", image_url=media)
             try:
                 terbit(api("POST", "me/threads", **q)["id"])
